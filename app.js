@@ -11,6 +11,7 @@ var selectedId = null;
 var activeCR = 'all';
 var activeType = 'all';
 var selMonster = null;
+var draggedMonster = null;
 
 function mkEncounter(name) {
   return { id: nextId++, name: name, combatants: [], currentTurn: 0, round: 1 };
@@ -146,6 +147,24 @@ function renderMonsterList(list) {
       '</div>' +
       '<span class="cr-badge ' + crCls(m.cr) + '">CR ' + m.cr + '</span>';
     row.onclick = function() { showMonsterDetail(m); };
+    // ── Drag to initiative list ──
+    row.setAttribute('draggable', 'true');
+    (function(monster, el) {
+      el.addEventListener('dragstart', function(e) {
+        draggedMonster = monster;
+        e.dataTransfer.effectAllowed = 'copy';
+        e.dataTransfer.setData('text/plain', monster.name);
+        el.classList.add('dragging');
+        var listArea = document.querySelector('.init-list-area');
+        if (listArea) listArea.classList.add('drop-active');
+      });
+      el.addEventListener('dragend', function() {
+        el.classList.remove('dragging');
+        draggedMonster = null;
+        var listArea = document.querySelector('.init-list-area');
+        if (listArea) listArea.classList.remove('drop-active', 'drag-hover');
+      });
+    })(m, row);
     container.appendChild(row);
   });
 }
@@ -204,6 +223,61 @@ function addMonsterToEnc() {
   }
   render();
   showToast('Added ' + qty + 'x ' + m.name);
+}
+
+// ── Initiative Drop Zone ──
+function setupInitDropZone() {
+  var listArea = document.querySelector('.init-list-area');
+  if (!listArea) return;
+  // Inject the hover hint overlay
+  var hint = document.createElement('div');
+  hint.className = 'drop-hint-overlay';
+  hint.innerHTML = '<span class="dho-icon">&#9876;</span>Drop to add<span class="dho-qty">Hold Shift to set quantity</span>';
+  listArea.appendChild(hint);
+
+  listArea.addEventListener('dragover', function(e) {
+    if (!draggedMonster) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'copy';
+    listArea.classList.add('drag-hover');
+  });
+  listArea.addEventListener('dragleave', function(e) {
+    if (!listArea.contains(e.relatedTarget)) {
+      listArea.classList.remove('drag-hover');
+    }
+  });
+  listArea.addEventListener('drop', function(e) {
+    e.preventDefault();
+    listArea.classList.remove('drag-hover', 'drop-active');
+    if (!draggedMonster) return;
+    var m = draggedMonster;
+    draggedMonster = null;
+    if (e.shiftKey) {
+      var raw = prompt('Add how many ' + m.name + '?', '1');
+      if (raw === null) return;
+      var qty = Math.max(1, Math.min(20, parseInt(raw) || 1));
+      dropAddMonster(m, qty);
+    } else {
+      dropAddMonster(m, 1);
+    }
+  });
+}
+
+function dropAddMonster(m, qty) {
+  for (var i = 0; i < qty; i++) {
+    var name = qty > 1 ? m.name + ' ' + (i + 1) : m.name;
+    var mStats = m.stats || MONSTER_STATS[m.name] || null;
+    var c = mkCombatant(name, m.encounterType || 'enemy', {
+      maxHP: m.hp, hp: m.hp, ac: m.ac,
+      initiativeMod: m.initiativeMod || 0,
+      spells: m.spells ? m.spells.slice() : [],
+      stats: mStats ? JSON.parse(JSON.stringify(mStats)) : null
+    });
+    enc().combatants.push(c);
+    log('\u2694 Dropped ' + name + ' (AC ' + (m.ac || '?') + ', HP ' + (m.hp || '?') + ')', 'hl');
+  }
+  render();
+  showToast('\u2694 ' + qty + 'x ' + m.name + ' added');
 }
 
 // ── Spell Popup ──
@@ -1379,11 +1453,61 @@ function setupPanelResize() {
   }
 }
 
+// ── Interactive Home Screen ──
+function spawnFireflies() {
+  var hs = document.getElementById('homeScreen');
+  if (!hs) return;
+  var count = 22;
+  for (var i = 0; i < count; i++) {
+    (function() {
+      var ff = document.createElement('div');
+      ff.className = 'firefly';
+      var size = 2 + Math.random() * 3.5;
+      var startX = 5 + Math.random() * 90;   // % across screen
+      var startY = 55 + Math.random() * 40;  // start in lower half
+      var duration = 9 + Math.random() * 14; // 9–23s per cycle
+      var delay = -(Math.random() * duration);// stagger so not all at once
+      ff.style.cssText = [
+        'width:' + size + 'px',
+        'height:' + size + 'px',
+        'left:' + startX + '%',
+        'top:' + startY + '%',
+        'animation-duration:' + duration + 's',
+        'animation-delay:' + delay + 's'
+      ].join(';');
+      hs.appendChild(ff);
+    })();
+  }
+}
+
+function setupHomeParallax() {
+  var hs = document.getElementById('homeScreen');
+  if (!hs) return;
+  var title = hs.querySelector('.home-title');
+  var cols  = hs.querySelector('.home-cols');
+  var orn   = hs.querySelector('.home-orn');
+  hs.addEventListener('mousemove', function(e) {
+    var rx = (e.clientX / (hs.offsetWidth  || window.innerWidth)  - 0.5);
+    var ry = (e.clientY / (hs.offsetHeight || window.innerHeight) - 0.5);
+    if (title) title.style.transform = 'translate(' + (-rx * 10) + 'px,' + (-ry * 6) + 'px)';
+    if (cols)  cols.style.transform  = 'translate(' + (-rx * 5)  + 'px,' + (-ry * 3) + 'px)';
+    if (orn)   orn.style.transform   = 'translate(' + (-rx * 14) + 'px,' + (-ry * 8) + 'px)';
+  });
+  hs.addEventListener('mouseleave', function() {
+    if (title) title.style.transform = '';
+    if (cols)  cols.style.transform  = '';
+    if (orn)   orn.style.transform   = '';
+  });
+}
+
 // ── Boot ──
 init();
 loadParty();
 renderPartyRoster();
 renderHomeParty();
 setupHomeDrop();
+setupInitDropZone();
 setupPanelResize();
 loadSession();
+spawnFireflies();
+setupHomeParallax();
